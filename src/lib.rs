@@ -25,6 +25,41 @@ impl<T> Array<T> {
         }
     }
 
+    pub fn from_slice_none<'a, U>(slice: &'a [U]) -> (Self, Vec<Stash<'a, T, U>>)
+    where
+        T: Copy + Ptr,
+        U: 'a + ToGlibPtr<'a, T>,
+    {
+        let len = slice
+            .len()
+            .try_into()
+            .expect("Vec is too long to fit into a GArray");
+        // Create a new GArray of the correct size
+        let ptr = unsafe {
+            glib::ffi::g_array_sized_new(
+                false.into(),
+                false.into(),
+                std::mem::size_of::<T>()
+                    .try_into()
+                    .expect("Pointer is too large to fit into a GArray"),
+                len,
+            )
+        };
+        // Convert Rust types to glib types
+        // This Vec is the backing storage for the glib types and the pointers to them
+        let stashes: Vec<_> = slice.iter().map(|i| i.to_glib_none()).collect();
+        // Add all the elements
+        for elem in &stashes {
+            unsafe {
+                glib::ffi::g_array_append_vals(ptr, elem.0.to(), 1);
+            }
+        }
+        // Convert to the Rust type
+        assert!(!ptr.is_null(), "Out of memory");
+        let array: glib::Array = unsafe { from_glib_full(ptr) };
+        (unsafe { Self::new(array) }, stashes)
+    }
+
     pub unsafe fn as_slice(&self) -> &[T] {
         std::slice::from_raw_parts(self.garray.data() as _, self.garray.len())
     }
