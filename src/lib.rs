@@ -1,4 +1,5 @@
 use std::{
+    convert::TryInto,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
@@ -87,5 +88,53 @@ impl<T> Deref for Array<T> {
 impl<T> DerefMut for Array<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { self.as_slice_mut() }
+    }
+}
+
+// Note: T must be Copy because glib will just blindly copy the bytes
+impl<T: Copy> From<Vec<T>> for Array<T> {
+    fn from(vec: Vec<T>) -> Self {
+        let len = vec
+            .len()
+            .try_into()
+            .expect("Vec is too long to fit into a GArray");
+        // Create a new GArray of the correct size
+        let ptr = unsafe {
+            glib::ffi::g_array_sized_new(
+                false.into(),
+                false.into(),
+                std::mem::size_of::<T>()
+                    .try_into()
+                    .expect("Type is too large to fit into a GArray"),
+                len,
+            )
+        };
+        // Add all the elements
+        if len != 0 {
+            unsafe {
+                glib::ffi::g_array_append_vals(ptr, vec.as_ptr().cast(), len);
+            }
+        }
+        // Convert to the Rust type
+        assert!(!ptr.is_null(), "Out of memory");
+        let array: glib::Array = unsafe { from_glib_full(ptr) };
+        unsafe { Self::new(array) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn array_from_vec() {
+        let vec = vec![1, 2, 3];
+        let array = Array::from(vec);
+        let slice = unsafe { array.as_slice() };
+        assert_eq!(slice.len(), 3);
+        assert_eq!(slice, &[1, 2, 3]);
+        assert_eq!(array[0], 1);
+        assert_eq!(array[1], 2);
+        assert_eq!(array[2], 3);
     }
 }
